@@ -25,30 +25,31 @@ START_STT_SERVER = False # Set to True to use the client/server version of Realt
 DEFAULT_RECORDER_CONFIG: Dict[str, Any] = {
     "use_microphone": False,
     "spinner": False,
-    "model": "base.en",
-    "realtime_model_type": "base.en",
-    "use_main_model_for_realtime": False,
-    "language": "en", # Default, will be overridden by source_language in __init__
-    "silero_sensitivity": 0.05,
-    "webrtc_sensitivity": 3,
+    "model": "base.en", # Explicitly Whisper
+    "realtime_model_type": "base.en", # Explicitly Whisper for real-time
+    "language": "en", # Whisper needs language
+    "faster_whisper_vad_filter": True, # Recommended for Whisper
     "post_speech_silence_duration": 0.7,
     "min_length_of_recording": 0.5,
     "min_gap_between_recordings": 0,
     "enable_realtime_transcription": True,
     "realtime_processing_pause": 0.03,
-    "silero_use_onnx": True,
-    "silero_deactivity_detection": True,
-    "early_transcription_on_silence": 0,
-    "beam_size": 3,
-    "beam_size_realtime": 3,
+    "early_transcription_on_silence": 0, # Can be useful with Whisper
+    "beam_size": 3, # Whisper parameter
+    "beam_size_realtime": 3, # Whisper parameter
     "no_log_file": True,
-    "wake_words": "jarvis",
-    "wakeword_backend": "pvporcupine",
-    "allowed_latency_limit": 500,
+    "allowed_latency_limit": 500, # General RealtimeSTT parameter
     # Callbacks will be added dynamically in _create_recorder
     "debug_mode": True,
-    "initial_prompt_realtime": "The sky is blue. When the sky... She walked home. Because he... Today is sunny. If only I...",
-    "faster_whisper_vad_filter": False,
+    "initial_prompt_realtime": "The sky is blue. When the sky... She walked home. Because he... Today is sunny. If only I...", # Whisper initial prompt
+    # Removed:
+    # "use_main_model_for_realtime": False, (Not needed when model and realtime_model_type are the same Whisper model)
+    # "silero_sensitivity": 0.05, (Silero VAD specific)
+    # "webrtc_sensitivity": 3, (WebRTC VAD specific)
+    # "silero_use_onnx": True, (Silero VAD specific)
+    # "silero_deactivity_detection": True, (Silero VAD specific)
+    # "wake_words": "jarvis", (Wake word specific, not for core STT)
+    # "wakeword_backend": "pvporcupine", (Wake word specific)
 }
 
 

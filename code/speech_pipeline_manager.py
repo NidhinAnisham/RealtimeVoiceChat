@@ -25,24 +25,17 @@ except FileNotFoundError:
     logger.warning("🗣️📄 system_prompt.txt not found. Using default system prompt.")
     system_prompt = "You are a helpful assistant."
 
-
-USE_ORPHEUS_UNCENSORED = False
-
-orpheus_prompt_addon_normal = """
+# Removed USE_ORPHEUS_UNCENSORED and orpheus_prompt_addon_uncensored
+# Renamed orpheus_prompt_addon_normal to ORPHEUS_EMOTION_TAGS_ADDON
+ORPHEUS_EMOTION_TAGS_ADDON = """
 When expressing emotions, you are ONLY allowed to use the following exact tags (including the spaces):
 " <laugh> ", " <chuckle> ", " <sigh> ", " <cough> ", " <sniffle> ", " <groan> ", " <yawn> ", and " <gasp> ".
 
 Do NOT create or use any other emotion tags. Do NOT remove the spaces. Use these tags exactly as shown, and only when appropriate.
 """.strip()
 
-orpheus_prompt_addon_uncensored = """
-When expressing emotions, you are ONLY allowed to use the following exact tags (including the spaces):
-" <moans> ", " <panting> ", " <grunting> ", " <gagging sounds> ", " <chokeing> ", " <kissing noises> ", " <laugh> ", " <chuckle> ", " <sigh> ", " <cough> ", " <sniffle> ", " <groan> ", " <yawn> ", " <gasp> ".
-Do NOT create or use any other emotion tags. Do NOT remove the spaces. Use these tags exactly as shown, and only when appropriate.
-""".strip()
-
-orpheus_prompt_addon = orpheus_prompt_addon_uncensored if USE_ORPHEUS_UNCENSORED else orpheus_prompt_addon_normal
-
+# orpheus_prompt_addon is now just ORPHEUS_EMOTION_TAGS_ADDON as uncensored version is removed
+# This will be unconditionally added to the system_prompt later.
 
 class PipelineRequest:
     """
@@ -112,7 +105,8 @@ class RunningGeneration:
 
 class SpeechPipelineManager:
     """
-    Orchestrates the text-to-speech pipeline, managing LLM and TTS workers.
+    Orchestrates the text-to-speech pipeline, managing LLM and TTS workers,
+    now exclusively using Orpheus for TTS.
 
     This class handles incoming text requests, manages the lifecycle of a generation
     (including LLM inference, TTS synthesis for both quick and final parts),
@@ -121,51 +115,49 @@ class SpeechPipelineManager:
     """
     def __init__(
             self,
-            tts_engine: str = "kokoro",
-            llm_provider: str = "ollama",
+            # tts_engine parameter removed, AudioProcessor will be hardcoded to Orpheus
             llm_model: str = "hf.co/bartowski/huihui-ai_Mistral-Small-24B-Instruct-2501-abliterated-GGUF:Q4_K_M",
             no_think: bool = False,
-            orpheus_model: str = "orpheus-3b-0.1-ft-Q8_0-GGUF/orpheus-3b-0.1-ft-q8_0.gguf",
+            orpheus_model: str = "orpheus-3b-0.1-ft-Q8_0-GGUF/orpheus-3b-0.1-ft-q8_0.gguf", # Path to Orpheus GGUF model
         ):
         """
         Initializes the SpeechPipelineManager.
 
-        Sets up configuration, instantiates dependencies (AudioProcessor, LLM, etc.),
-        loads system prompts, initializes state variables (queues, events, flags),
+        Sets up configuration, instantiates dependencies (AudioProcessor for Orpheus, LLM, etc.),
+        loads system prompts (now always with Orpheus emotion tags),
+        initializes state variables (queues, events, flags),
         measures initial inference latencies, and starts the background worker threads.
 
         Args:
-            tts_engine: The TTS engine to use (e.g., "kokoro", "orpheus").
-            llm_provider: The LLM backend provider (e.g., "ollama").
-            llm_model: The specific LLM model identifier.
+            llm_model: The specific LLM model identifier for the Llama C++ server.
             no_think: If True, removes specific thinking tags from LLM output.
-            orpheus_model: Path or identifier for the Orpheus TTS model, if used.
+            orpheus_model: Path or identifier for the Orpheus TTS GGUF model.
         """
-        self.tts_engine = tts_engine
-        self.llm_provider = llm_provider
+        # self.tts_engine = tts_engine # Removed, Orpheus is fixed
         self.llm_model = llm_model
         self.no_think = no_think
-        self.orpheus_model = orpheus_model
+        self.orpheus_model = orpheus_model # This is passed to AudioProcessor
 
-        self.system_prompt = system_prompt
-        if tts_engine == "orpheus":
-            self.system_prompt += f"\n{orpheus_prompt_addon}"
+        # System prompt now unconditionally includes Orpheus emotion tags
+        self.system_prompt = system_prompt + f"\n{ORPHEUS_EMOTION_TAGS_ADDON}"
+        logger.info(f"🗣️📄 System prompt (with Orpheus tags): {self.system_prompt}")
 
         # --- Instance Dependencies ---
+        # AudioProcessor is now instantiated without the 'engine' parameter, as it's fixed to Orpheus internally.
         self.audio = AudioProcessor(
-            engine=self.tts_engine,
-            orpheus_model=self.orpheus_model
+            orpheus_model=self.orpheus_model # Pass the GGUF model path
         )
         self.audio.on_first_audio_chunk_synthesize = self.on_first_audio_chunk_synthesize
         self.text_similarity = TextSimilarity(focus='end', n_words=5)
         self.text_context = TextContext()
         self.generation_counter: int = 0
         self.abort_lock = threading.Lock()
+        # LLM instantiation simplified: backend is fixed in LLM, base_url/api_key have defaults
         self.llm = LLM(
-            backend=self.llm_provider, # Or your backend
-            model=self.llm_model,
+            model=self.llm_model, # Pass the GGUF model name for Llama C++
             system_prompt=self.system_prompt,
             no_think=no_think,
+            # base_url and api_key will use defaults from LLM class ("http://localhost:8080/v1", "no-key-needed")
         )
         self.llm.prewarm()
         self.llm_inference_time = self.llm.measure_inference_time()

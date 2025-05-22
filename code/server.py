@@ -28,23 +28,27 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import HTMLResponse, Response, FileResponse
 
 USE_SSL = False
-TTS_START_ENGINE = "orpheus"
-TTS_START_ENGINE = "kokoro"
-TTS_START_ENGINE = "coqui"
-TTS_ORPHEUS_MODEL = "Orpheus_3B-1BaseGGUF/mOrpheus_3B-1Base_Q4_K_M.gguf"
-TTS_ORPHEUS_MODEL = "orpheus-3b-0.1-ft-Q8_0-GGUF/orpheus-3b-0.1-ft-q8_0.gguf"
+# TTS_START_ENGINE is removed as Orpheus is now the only engine.
+# TTS_START_ENGINE = "orpheus"
+# TTS_START_ENGINE = "kokoro"
+# TTS_START_ENGINE = "coqui"
 
-LLM_START_PROVIDER = "ollama"
-#LLM_START_MODEL = "qwen3:30b-a3b"
-LLM_START_MODEL = "hf.co/bartowski/huihui-ai_Mistral-Small-24B-Instruct-2501-abliterated-GGUF:Q4_K_M"
-# LLM_START_PROVIDER = "lmstudio"
-# LLM_START_MODEL = "Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q3_K_L.gguf"
-NO_THINK = False
-DIRECT_STREAM = TTS_START_ENGINE=="orpheus"
+# TTS_ORPHEUS_MODEL should be the primary way to define the model path.
+# Defaulting to the last known value, can be overridden by TTS_ORPHEUS_MODEL_PATH env var.
+DEFAULT_ORPHEUS_MODEL_PATH = "orpheus-3b-0.1-ft-Q8_0-GGUF/orpheus-3b-0.1-ft-q8_0.gguf"
+TTS_ORPHEUS_MODEL = os.getenv("TTS_ORPHEUS_MODEL_PATH", DEFAULT_ORPHEUS_MODEL_PATH)
+
+
+# LLM_START_PROVIDER is removed as the LLM module now only supports OpenAI-compatible (Llama C++)
+# LLM_START_MODEL defines the model to be used by the Llama C++ server.
+LLM_START_MODEL = os.getenv("LLM_START_MODEL", "hf.co/bartowski/huihui-ai_Mistral-Small-24B-Instruct-2501-abliterated-GGUF:Q4_K_M")
+NO_THINK = False # This is a feature flag for LLM prompting, independent of provider
+DIRECT_STREAM = True # Orpheus is the only engine, and it supports direct streaming.
 
 if __name__ == "__main__":
-    logger.info(f"🖥️⚙️ {Colors.apply('[PARAM]').blue} Starting engine: {Colors.apply(TTS_START_ENGINE).blue}")
-    logger.info(f"🖥️⚙️ {Colors.apply('[PARAM]').blue} Direct streaming: {Colors.apply('ON' if DIRECT_STREAM else 'OFF').blue}")
+    logger.info(f"🖥️⚙️ {Colors.apply('[PARAM]').blue} TTS Engine: Orpheus (Exclusive)")
+    logger.info(f"🖥️⚙️ {Colors.apply('[PARAM]').blue} Orpheus Model Path: {Colors.apply(TTS_ORPHEUS_MODEL).blue}")
+    logger.info(f"🖥️⚙️ {Colors.apply('[PARAM]').blue} Direct streaming: {Colors.apply('ON').blue}") # Always ON
 
 # Define the maximum allowed size for the incoming audio queue
 try:
@@ -116,21 +120,20 @@ async def lifespan(app: FastAPI):
     """
     logger.info("🖥️▶️ Server starting up")
     # Initialize global components, not connection-specific state
+    # SpeechPipelineManager no longer takes tts_engine
     app.state.SpeechPipelineManager = SpeechPipelineManager(
-        tts_engine=TTS_START_ENGINE,
-        llm_provider=LLM_START_PROVIDER,
         llm_model=LLM_START_MODEL,
         no_think=NO_THINK,
-        orpheus_model=TTS_ORPHEUS_MODEL,
+        orpheus_model=TTS_ORPHEUS_MODEL, # Pass the GGUF model path
     )
 
     app.state.Upsampler = UpsampleOverlap()
     app.state.AudioInputProcessor = AudioInputProcessor(
         LANGUAGE,
-        is_orpheus=TTS_START_ENGINE=="orpheus",
+        is_orpheus=True, # Orpheus is now the only engine
         pipeline_latency=app.state.SpeechPipelineManager.full_output_pipeline_latency / 1000, # seconds
     )
-    app.state.Aborting = False # Keep this? Its usage isn't clear in the provided snippet. Minimizing changes.
+    app.state.Aborting = False
 
     yield
 
