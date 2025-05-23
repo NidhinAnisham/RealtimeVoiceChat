@@ -11,8 +11,8 @@ from typing import Callable, Generator, Optional
 import numpy as np
 from huggingface_hub import hf_hub_download
 # Assuming RealtimeTTS is installed and available
-from RealtimeTTS import (CoquiEngine, KokoroEngine, OrpheusEngine,
-                         OrpheusVoice, TextToAudioStream)
+from RealtimeTTS import (TextToAudioStream)
+from orpheus_engine import OrpheusEngine
 
 logger = logging.getLogger(__name__)
 
@@ -70,11 +70,11 @@ class AudioProcessor:
         # Initialize Orpheus Engine
         logger.info(f"👄⚙️ Initializing OrpheusEngine with model: {self.orpheus_model}")
         self.engine = OrpheusEngine(
-            model_path=self.orpheus_model, # RealtimeTTS OrpheusEngine uses model_path
+            model=self.orpheus_model, # RealtimeTTS OrpheusEngine uses model_path
             temperature=0.8,
             top_p=0.95,
             repetition_penalty=1.1,
-            max_new_tokens=1200, # Renamed from max_tokens for clarity if RealtimeTTS uses this
+            max_tokens=1200, # Renamed from max_tokens for clarity if RealtimeTTS uses this
         )
         # TODO: Verify OrpheusVoice usage. Assuming "tara" is a valid built-in or requires a file.
         # If "tara" is a placeholder that needs a file, this might need adjustment.

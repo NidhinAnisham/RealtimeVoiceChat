@@ -35,7 +35,7 @@ USE_SSL = False
 
 # TTS_ORPHEUS_MODEL should be the primary way to define the model path.
 # Defaulting to the last known value, can be overridden by TTS_ORPHEUS_MODEL_PATH env var.
-DEFAULT_ORPHEUS_MODEL_PATH = "orpheus-3b-0.1-ft-Q8_0-GGUF/orpheus-3b-0.1-ft-q8_0.gguf"
+DEFAULT_ORPHEUS_MODEL_PATH = r"D:\LLM\llama-cpp-vulkan\Models\orpheus-3b-0.1-ft-q4_k_m.gguf"
 TTS_ORPHEUS_MODEL = os.getenv("TTS_ORPHEUS_MODEL_PATH", DEFAULT_ORPHEUS_MODEL_PATH)
 
 

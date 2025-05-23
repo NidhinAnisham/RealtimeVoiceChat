@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # (Load system prompt)
 try:
-    with open("system_prompt.txt", "r", encoding="utf-8") as f:
+    with open("system_prompt_2.txt", "r", encoding="utf-8") as f:
         system_prompt = f.read().strip()
     logger.info("🗣️📄 System prompt loaded from file.")
 except FileNotFoundError:
@@ -139,8 +139,9 @@ class SpeechPipelineManager:
         self.orpheus_model = orpheus_model # This is passed to AudioProcessor
 
         # System prompt now unconditionally includes Orpheus emotion tags
-        self.system_prompt = system_prompt + f"\n{ORPHEUS_EMOTION_TAGS_ADDON}"
-        logger.info(f"🗣️📄 System prompt (with Orpheus tags): {self.system_prompt}")
+        #self.system_prompt = system_prompt + f"\n{ORPHEUS_EMOTION_TAGS_ADDON}"
+        self.system_prompt = system_prompt
+        #logger.info(f"🗣️📄 System prompt (with Orpheus tags): {self.system_prompt}")
 
         # --- Instance Dependencies ---
         # AudioProcessor is now instantiated without the 'engine' parameter, as it's fixed to Orpheus internally.

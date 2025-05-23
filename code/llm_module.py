@@ -69,7 +69,7 @@ logger.setLevel(log_level) # Ensure module logger respects level
 # OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 # LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
 
-LLAMA_CPP_DEFAULT_BASE_URL = "http://localhost:8080/v1"
+LLAMA_CPP_DEFAULT_BASE_URL = "http://localhost:11434/v1"
 LLAMA_CPP_DEFAULT_API_KEY = "no-key-needed"
 
 # --- Backend Client Creation Function (Simplified) ---
@@ -150,7 +150,7 @@ class LLM:
             ImportError: If the 'openai' library is not installed.
         """
         self.backend = "openai_compatible" # Fixed backend type
-        logger.info(f"🤖⚙️ Initializing LLM for Llama C++ (OpenAI compatible): model='{model}', system_prompt='{system_prompt}'")
+        logger.info(f"🤖⚙️ Initializing LLM for Llama C++ (OpenAI compatible): model='{model}'")
 
         if not OPENAI_AVAILABLE:
              raise ImportError("openai library is required for the Llama C++ (OpenAI compatible) backend but not installed.")
