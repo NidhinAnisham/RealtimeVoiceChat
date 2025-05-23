@@ -11,137 +11,82 @@ from typing import Callable, Generator, Optional
 import numpy as np
 from huggingface_hub import hf_hub_download
 # Assuming RealtimeTTS is installed and available
-from RealtimeTTS import (CoquiEngine, KokoroEngine, OrpheusEngine,
-                         OrpheusVoice, TextToAudioStream)
+from RealtimeTTS import (TextToAudioStream)
+from orpheus_engine import OrpheusEngine
 
 logger = logging.getLogger(__name__)
 
 # Default configuration constants
-START_ENGINE = "kokoro"
+# START_ENGINE is removed as Orpheus is now the only engine.
 Silence = namedtuple("Silence", ("comma", "sentence", "default"))
 ENGINE_SILENCES = {
-    "coqui":   Silence(comma=0.3, sentence=0.6, default=0.3),
-    "kokoro":  Silence(comma=0.3, sentence=0.6, default=0.3),
-    "orpheus": Silence(comma=0.3, sentence=0.6, default=0.3),
+    # "coqui":   Silence(comma=0.3, sentence=0.6, default=0.3), # Removed
+    # "kokoro":  Silence(comma=0.3, sentence=0.6, default=0.3), # Removed
+    "orpheus": Silence(comma=0.3, sentence=0.6, default=0.3), # Kept for Orpheus
 }
-# Stream chunk sizes influence latency vs. throughput trade-offs
+# Stream chunk sizes are general and can be kept if Orpheus uses them, or removed if not.
+# For now, keeping them as they might be used by RealtimeTTS stream wrapper.
 QUICK_ANSWER_STREAM_CHUNK_SIZE = 8
 FINAL_ANSWER_STREAM_CHUNK_SIZE = 30
 
-# Coqui model download helper functions
-def create_directory(path: str) -> None:
-    """
-    Creates a directory at the specified path if it doesn't already exist.
-
-    Args:
-        path: The directory path to create.
-    """
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-def ensure_lasinya_models(models_root: str = "models", model_name: str = "Lasinya") -> None:
-    """
-    Ensures the Coqui XTTS Lasinya model files are present locally.
-
-    Checks for required model files (config.json, vocab.json, etc.) within
-    the specified directory structure. If any file is missing, it downloads
-    it from the 'KoljaB/XTTS_Lasinya' Hugging Face Hub repository.
-
-    Args:
-        models_root: The root directory where models are stored.
-        model_name: The specific name of the model subdirectory.
-    """
-    base = os.path.join(models_root, model_name)
-    create_directory(base)
-    files = ["config.json", "vocab.json", "speakers_xtts.pth", "model.pth"]
-    for fn in files:
-        local_file = os.path.join(base, fn)
-        if not os.path.exists(local_file):
-            # Not using logger here as it might not be configured yet during module import/init
-            print(f"👄⏬ Downloading {fn} to {base}")
-            hf_hub_download(
-                repo_id="KoljaB/XTTS_Lasinya",
-                filename=fn,
-                local_dir=base
-            )
+# Removed: create_directory and ensure_lasinya_models functions as Coqui is no longer used.
 
 class AudioProcessor:
     """
-    Manages Text-to-Speech (TTS) synthesis using various engines via RealtimeTTS.
+    Manages Text-to-Speech (TTS) synthesis using the Orpheus engine via RealtimeTTS.
 
-    This class initializes a chosen TTS engine (Coqui, Kokoro, or Orpheus),
-    configures it for streaming output, measures initial latency (TTFT),
-    and provides methods to synthesize audio from text strings or generators,
-    placing the resulting audio chunks into a queue. It handles dynamic
-    stream parameter adjustments and manages the synthesis lifecycle, including
-    optional callbacks upon receiving the first audio chunk.
+    This class initializes the Orpheus TTS engine, configures it for streaming output,
+    measures initial latency (TTFT), and provides methods to synthesize audio
+    from text strings or generators, placing the resulting audio chunks into a queue.
+    It handles the synthesis lifecycle, including optional callbacks upon
+    receiving the first audio chunk.
     """
     def __init__(
             self,
-            engine: str = START_ENGINE,
-            orpheus_model: str = "orpheus-3b-0.1-ft-Q8_0-GGUF/orpheus-3b-0.1-ft-q8_0.gguf",
+            # engine parameter removed, fixed to "orpheus"
+            orpheus_model: str = "orpheus-3b-0.1-ft-Q8_0-GGUF/orpheus-3b-0.1-ft-q8_0.gguf", # Default model path
         ) -> None:
         """
-        Initializes the AudioProcessor with a specific TTS engine.
+        Initializes the AudioProcessor with the Orpheus TTS engine.
 
-        Sets up the chosen engine (Coqui, Kokoro, Orpheus), downloads Coqui models
-        if necessary, configures the RealtimeTTS stream, and performs an initial
-        synthesis to measure Time To First Audio chunk (TTFA).
+        Sets up the Orpheus engine, configures the RealtimeTTS stream, and performs
+        an initial synthesis to measure Time To First Audio chunk (TTFA).
 
         Args:
-            engine: The name of the TTS engine to use ("coqui", "kokoro", "orpheus").
-            orpheus_model: The path or identifier for the Orpheus model file (used only if engine is "orpheus").
+            orpheus_model: The path or identifier for the Orpheus GGUF model file.
         """
-        self.engine_name = engine
+        self.engine_name = "orpheus" # Fixed engine
         self.stop_event = threading.Event()
         self.finished_event = threading.Event()
         self.audio_chunks = asyncio.Queue() # Queue for synthesized audio output
         self.orpheus_model = orpheus_model
 
-        self.silence = ENGINE_SILENCES.get(engine, ENGINE_SILENCES[self.engine_name])
-        self.current_stream_chunk_size = QUICK_ANSWER_STREAM_CHUNK_SIZE # Initial chunk size
+        # Silence settings are now directly for Orpheus
+        self.silence = ENGINE_SILENCES[self.engine_name]
+        # current_stream_chunk_size might not be relevant for OrpheusEngine directly,
+        # but TextToAudioStream might use it. Keeping for now.
+        self.current_stream_chunk_size = QUICK_ANSWER_STREAM_CHUNK_SIZE
 
-        # Dynamically load and configure the selected TTS engine
-        if engine == "coqui":
-            ensure_lasinya_models(models_root="models", model_name="Lasinya")
-            self.engine = CoquiEngine(
-                specific_model="Lasinya",
-                local_models_path="./models",
-                voice="reference_audio.wav",
-                speed=1.1,
-                use_deepspeed=True,
-                thread_count=6,
-                stream_chunk_size=self.current_stream_chunk_size,
-                overlap_wav_len=1024,
-                load_balancing=True,
-                load_balancing_buffer_length=0.5,
-                load_balancing_cut_off=0.1,
-                add_sentence_filter=True,
-            )
-        elif engine == "kokoro":
-            self.engine = KokoroEngine(
-                voice="af_heart",
-                default_speed=1.26,
-                trim_silence=True,
-                silence_threshold=0.01,
-                extra_start_ms=25,
-                extra_end_ms=15,
-                fade_in_ms=15,
-                fade_out_ms=10,
-            )
-        elif engine == "orpheus":
-            self.engine = OrpheusEngine(
-                model=self.orpheus_model,
-                temperature=0.8,
-                top_p=0.95,
-                repetition_penalty=1.1,
-                max_tokens=1200,
-            )
-            voice = OrpheusVoice("tara")
-            self.engine.set_voice(voice)
-        else:
-            raise ValueError(f"Unsupported engine: {engine}")
-
+        # Initialize Orpheus Engine
+        logger.info(f"👄⚙️ Initializing OrpheusEngine with model: {self.orpheus_model}")
+        self.engine = OrpheusEngine(
+            model=self.orpheus_model, # RealtimeTTS OrpheusEngine uses model_path
+            temperature=0.8,
+            top_p=0.95,
+            repetition_penalty=1.1,
+            max_tokens=1200, # Renamed from max_tokens for clarity if RealtimeTTS uses this
+        )
+        # TODO: Verify OrpheusVoice usage. Assuming "tara" is a valid built-in or requires a file.
+        # If "tara" is a placeholder that needs a file, this might need adjustment.
+        # For GGUF models, voice often comes from the model itself or speaker embeddings.
+        # The OrpheusEngine in RealtimeTTS might handle voice selection differently.
+        # The original code had:
+        # voice = OrpheusVoice("tara")
+        # self.engine.set_voice(voice)
+        # This part is commented out as GGUF models usually don't require external voice files in this manner.
+        # If a specific speaker ID or embedding is needed, it should be configured via OrpheusEngine parameters.
+        # For now, assuming default voice from the model or engine.
+        logger.info("👄⚙️ OrpheusEngine initialized. Voice configuration depends on model/engine defaults.")
 
         # Initialize the RealtimeTTS stream
         self.stream = TextToAudioStream(
@@ -151,43 +96,45 @@ class AudioProcessor:
             on_audio_stream_stop=self.on_audio_stream_stop,
         )
 
-        # Ensure Coqui engine starts with the quick chunk size
-        if self.engine_name == "coqui" and hasattr(self.engine, 'set_stream_chunk_size') and self.current_stream_chunk_size != QUICK_ANSWER_STREAM_CHUNK_SIZE:
-            logger.info(f"👄⚙️ Setting Coqui stream chunk size to {QUICK_ANSWER_STREAM_CHUNK_SIZE} for initial setup.")
-            self.engine.set_stream_chunk_size(QUICK_ANSWER_STREAM_CHUNK_SIZE)
-            self.current_stream_chunk_size = QUICK_ANSWER_STREAM_CHUNK_SIZE
+        # Removed Coqui-specific stream_chunk_size setting logic
 
         # Prewarm the engine
-        self.stream.feed("prewarm")
+        logger.info("👄🔥 Prewarming Orpheus engine...")
+        self.stream.feed("Prewarm") # Using "Prewarm" as it's more descriptive than "prewarm"
         play_kwargs = dict(
-            log_synthesized_text=False, # Don't log prewarm text
+            log_synthesized_text=False,
             muted=True,
             fast_sentence_fragment=False,
             comma_silence_duration=self.silence.comma,
             sentence_silence_duration=self.silence.sentence,
             default_silence_duration=self.silence.default,
-            force_first_fragment_after_words=999999, # Effectively disable this
+            force_first_fragment_after_words=999999,
         )
-        self.stream.play(**play_kwargs) # Synchronous play for prewarm
-        # Wait for prewarm to finish (indicated by on_audio_stream_stop)
+        self.stream.play(**play_kwargs)
         while self.stream.is_playing():
             time.sleep(0.01)
-        self.finished_event.wait() # Wait for stop callback
+        self.finished_event.wait(timeout=5.0) # Added timeout for robustness
+        if not self.finished_event.is_set():
+            logger.warning("👄⚠️ Prewarm finished_event timed out. Forcing stream stop.")
+            self.stream.stop() # Force stop if not finished
+            self.finished_event.wait(timeout=2.0) # Wait again
         self.finished_event.clear()
+        logger.info("👄🔥 Orpheus engine prewarmed.")
 
         # Measure Time To First Audio (TTFA)
+        logger.info("👄⏱️ Measuring Orpheus TTFA...")
         start_time = time.time()
         ttfa = None
         def on_audio_chunk_ttfa(chunk: bytes):
             nonlocal ttfa
-            if ttfa is None:
+            if ttfa is None: # Only capture the first time
                 ttfa = time.time() - start_time
-                logger.debug(f"👄⏱️ TTFA measurement first chunk arrived, TTFA: {ttfa:.2f}s.")
+                logger.debug(f"👄⏱️ TTFA measurement: First Orpheus audio chunk received. TTFA: {ttfa:.3f}s.")
 
         self.stream.feed("This is a test sentence to measure the time to first audio chunk.")
         play_kwargs_ttfa = dict(
             on_audio_chunk=on_audio_chunk_ttfa,
-            log_synthesized_text=False, # Don't log test sentence
+            log_synthesized_text=False,
             muted=True,
             fast_sentence_fragment=False,
             comma_silence_duration=self.silence.comma,
@@ -197,22 +144,29 @@ class AudioProcessor:
         )
         self.stream.play_async(**play_kwargs_ttfa)
 
-        # Wait until the first chunk arrives or stream finishes
+        # Wait for TTFA or stream completion
+        wait_start_ttfa = time.time()
+        max_wait_ttfa = 10.0 # Max seconds to wait for TTFA
         while ttfa is None and (self.stream.is_playing() or not self.finished_event.is_set()):
+            if time.time() - wait_start_ttfa > max_wait_ttfa:
+                logger.warning(f"👄⚠️ TTFA measurement timed out after {max_wait_ttfa}s.")
+                break
             time.sleep(0.01)
-        self.stream.stop() # Ensure stream stops cleanly
+        
+        if not self.stream.is_playing() and ttfa is None and not self.finished_event.is_set():
+            logger.warning("👄⚠️ TTFA measurement: Stream stopped before TTFA could be measured and finished_event not set.")
 
-        # Wait for stop callback if it hasn't fired yet
+        self.stream.stop() # Ensure stream stops
         if not self.finished_event.is_set():
-            self.finished_event.wait(timeout=2.0) # Add timeout for safety
+            self.finished_event.wait(timeout=2.0) # Wait for stop confirmation
         self.finished_event.clear()
 
         if ttfa is not None:
-            logger.debug(f"👄⏱️ TTFA measurement complete. TTFA: {ttfa:.2f}s.")
+            logger.info(f"👄⏱️ Orpheus TTFA measurement complete. TTFA: {ttfa:.3f}s.")
             self.tts_inference_time = ttfa * 1000  # Store as ms
         else:
-            logger.warning("👄⚠️ TTFA measurement failed (no audio chunk received).")
-            self.tts_inference_time = 0
+            logger.warning("👄⚠️ Orpheus TTFA measurement failed (no audio chunk received or timed out). Setting to 0.")
+            self.tts_inference_time = 0.0 # Set to a float
 
         # Callbacks to be set externally if needed
         self.on_first_audio_chunk_synthesize: Optional[Callable[[], None]] = None
@@ -234,32 +188,28 @@ class AudioProcessor:
             generation_string: str = "",
         ) -> bool:
         """
-        Synthesizes audio from a complete text string and puts chunks into a queue.
+        Synthesizes audio from a complete text string using Orpheus and puts chunks into a queue.
 
-        Feeds the entire text string to the TTS engine. As audio chunks are generated,
+        Feeds the entire text string to the Orpheus TTS engine. As audio chunks are generated,
         they are potentially buffered initially for smoother streaming and then put
         into the provided queue. Synthesis can be interrupted via the stop_event.
-        Skips initial silent chunks if using the Orpheus engine. Triggers the
-        `on_first_audio_chunk_synthesize` callback when the first valid audio chunk is queued.
+        Skips initial silent chunks. Triggers the `on_first_audio_chunk_synthesize`
+        callback when the first valid audio chunk is queued.
 
         Args:
             text: The text string to synthesize.
             audio_chunks: The queue to put the resulting audio chunks (bytes) into.
-                          This should typically be the instance's `self.audio_chunks`.
             stop_event: A threading.Event to signal interruption of the synthesis.
-                        This should typically be the instance's `self.stop_event`.
             generation_string: An optional identifier string for logging purposes.
 
         Returns:
             True if synthesis completed fully, False if interrupted by stop_event.
         """
-        if self.engine_name == "coqui" and hasattr(self.engine, 'set_stream_chunk_size') and self.current_stream_chunk_size != QUICK_ANSWER_STREAM_CHUNK_SIZE:
-            logger.info(f"👄⚙️ {generation_string} Setting Coqui stream chunk size to {QUICK_ANSWER_STREAM_CHUNK_SIZE} for quick synthesis.")
-            self.engine.set_stream_chunk_size(QUICK_ANSWER_STREAM_CHUNK_SIZE)
-            self.current_stream_chunk_size = QUICK_ANSWER_STREAM_CHUNK_SIZE
+        # Removed Coqui-specific stream chunk size setting
+        # if self.engine_name == "coqui" ...
 
         self.stream.feed(text)
-        self.finished_event.clear() # Reset finished event before starting
+        self.finished_event.clear()
 
         # Buffering state variables
         buffer: list[bytes] = []
@@ -414,35 +364,29 @@ class AudioProcessor:
             generation_string: str = "",
         ) -> bool:
         """
-        Synthesizes audio from a generator yielding text chunks and puts audio into a queue.
+        Synthesizes audio from a generator yielding text chunks using Orpheus and puts audio into a queue.
 
-        Feeds text chunks yielded by the generator to the TTS engine. As audio chunks
-        are generated, they are potentially buffered initially and then put into the
-        provided queue. Synthesis can be interrupted via the stop_event.
-        Skips initial silent chunks if using the Orpheus engine. Sets specific playback
-        parameters when using the Orpheus engine. Triggers the
-       `on_first_audio_chunk_synthesize` callback when the first valid audio chunk is queued.
-
+        Feeds text chunks yielded by the generator to the Orpheus TTS engine.
+        As audio chunks are generated, they are potentially buffered initially and then
+        put into the provided queue. Synthesis can be interrupted via the stop_event.
+        Skips initial silent chunks. Sets specific playback parameters for Orpheus.
+        Triggers the `on_first_audio_chunk_synthesize` callback when the first
+        valid audio chunk is queued.
 
         Args:
             generator: A generator yielding text chunks (strings) to synthesize.
             audio_chunks: The queue to put the resulting audio chunks (bytes) into.
-                          This should typically be the instance's `self.audio_chunks`.
             stop_event: A threading.Event to signal interruption of the synthesis.
-                        This should typically be the instance's `self.stop_event`.
             generation_string: An optional identifier string for logging purposes.
 
         Returns:
             True if synthesis completed fully, False if interrupted by stop_event.
         """
-        if self.engine_name == "coqui" and hasattr(self.engine, 'set_stream_chunk_size') and self.current_stream_chunk_size != FINAL_ANSWER_STREAM_CHUNK_SIZE:
-            logger.info(f"👄⚙️ {generation_string} Setting Coqui stream chunk size to {FINAL_ANSWER_STREAM_CHUNK_SIZE} for generator synthesis.")
-            self.engine.set_stream_chunk_size(FINAL_ANSWER_STREAM_CHUNK_SIZE)
-            self.current_stream_chunk_size = FINAL_ANSWER_STREAM_CHUNK_SIZE
+        # Removed Coqui-specific stream chunk size setting
+        # if self.engine_name == "coqui" ...
 
-        # Feed the generator to the stream
         self.stream.feed(generator)
-        self.finished_event.clear() # Reset finished event
+        self.finished_event.clear()
 
         # Buffering state variables
         buffer: list[bytes] = []
@@ -542,23 +486,26 @@ class AudioProcessor:
         on_audio_chunk.callback_fired = False
 
         play_kwargs = dict(
-            log_synthesized_text=True, # Log text from generator
+            log_synthesized_text=True,
             on_audio_chunk=on_audio_chunk,
             muted=True,
             fast_sentence_fragment=False,
             comma_silence_duration=self.silence.comma,
             sentence_silence_duration=self.silence.sentence,
             default_silence_duration=self.silence.default,
-            force_first_fragment_after_words=999999,
+            force_first_fragment_after_words=999999, # Default to not forcing early fragments
         )
 
-        # Add Orpheus specific parameters for generator streaming
-        if self.engine_name == "orpheus":
-            # These encourage waiting for more text before synthesizing, potentially better for generators
-            play_kwargs["minimum_sentence_length"] = 200
-            play_kwargs["minimum_first_fragment_length"] = 200
+        # Orpheus specific parameters for generator streaming (engine_name is always "orpheus")
+        # These encourage waiting for more text before synthesizing, potentially better for generators
+        play_kwargs["minimum_sentence_length"] = 200
+        play_kwargs["minimum_first_fragment_length"] = 200
+        # Additional Orpheus specific parameters from original code, if applicable to RealtimeTTS OrpheusEngine:
+        # play_kwargs["temperature"] = 0.8 # Already set in engine init
+        # play_kwargs["top_p"] = 0.95 # Already set in engine init
+        # play_kwargs["repetition_penalty"] = 1.1 # Already set in engine init
 
-        logger.info(f"👄▶️ {generation_string} Final Starting synthesis from generator.")
+        logger.info(f"👄▶️ {generation_string} Final Starting Orpheus synthesis from generator.")
         self.stream.play_async(**play_kwargs)
 
         # Wait loop for completion or interruption
